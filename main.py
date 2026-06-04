@@ -5,8 +5,6 @@ import os
 
 mcp = FastMCP("ExpenseTracker")
 
-DATABASE_URL = os.environ["DATABASE_URL"]
-
 CATEGORIES_PATH = os.path.join(
     os.path.dirname(__file__),
     "categories.json"
@@ -18,14 +16,17 @@ CATEGORIES_PATH = os.path.join(
 
 pool = None
 
-
 async def get_pool():
     global pool
 
     if pool is None:
-        pool = await asyncpg.create_pool(
-            DATABASE_URL
-        )
+        # Fetch the environment variable AT RUNTIME, not at import time
+        db_url = os.getenv("DATABASE_URL")
+        
+        if not db_url:
+            raise ValueError("DATABASE_URL environment variable is missing!")
+
+        pool = await asyncpg.create_pool(db_url)
 
         async with pool.acquire() as conn:
             await conn.execute(
@@ -43,40 +44,23 @@ async def get_pool():
 
     return pool
 
-
 # --------------------------------------------------
 # Validation
 # --------------------------------------------------
 
-
-def validate_category(
-    category: str,
-    subcategory: str
-) -> bool:
-
+def validate_category(category: str, subcategory: str) -> bool:
     try:
-
-        with open(
-            CATEGORIES_PATH,
-            "r",
-            encoding="utf-8"
-        ) as f:
-
+        with open(CATEGORIES_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
 
-        for item in data["categories"]:
-
+        for item in data.get("categories", []):
             if item["name"] == category:
-                return (
-                    subcategory
-                    in item["subcategories"]
-                )
+                return subcategory in item["subcategories"]
 
         return False
 
     except Exception:
         return False
-
 
 # --------------------------------------------------
 # Tools
