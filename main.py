@@ -2,6 +2,7 @@ from fastmcp import FastMCP
 import asyncpg
 import json
 import os
+import ssl
 
 mcp = FastMCP("ExpenseTracker")
 
@@ -26,7 +27,13 @@ async def get_pool():
         if not db_url:
             raise ValueError("DATABASE_URL environment variable is missing!")
 
-        pool = await asyncpg.create_pool(db_url)
+        # Establish an SSL context. Most cloud databases (Neon, Supabase, RDS)
+        # require an encrypted connection and will reject you otherwise.
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+
+        pool = await asyncpg.create_pool(db_url, ssl=ctx)
 
         async with pool.acquire() as conn:
             await conn.execute(
@@ -66,7 +73,6 @@ def validate_category(category: str, subcategory: str) -> bool:
 # Tools
 # --------------------------------------------------
 
-
 @mcp.tool()
 async def add_expense(
     date: str,
@@ -75,42 +81,24 @@ async def add_expense(
     subcategory: str,
     note: str = ""
 ):
-
-    if not validate_category(
-        category,
-        subcategory
-    ):
+    if not validate_category(category, subcategory):
         return {
             "status": "error",
-            "message":
-            "Invalid category/subcategory"
+            "message": "Invalid category/subcategory"
         }
 
     try:
-
         pool = await get_pool()
-
         async with pool.acquire() as conn:
-
             expense_id = await conn.fetchval(
                 """
                 INSERT INTO expenses(
-                    date,
-                    amount,
-                    category,
-                    subcategory,
-                    note
+                    date, amount, category, subcategory, note
                 )
-                VALUES(
-                    $1,$2,$3,$4,$5
-                )
+                VALUES($1, $2, $3, $4, $5)
                 RETURNING id
                 """,
-                date,
-                amount,
-                category,
-                subcategory,
-                note
+                date, amount, category, subcategory, note
             )
 
         return {
@@ -119,7 +107,6 @@ async def add_expense(
         }
 
     except Exception as e:
-
         return {
             "status": "error",
             "message": str(e)
@@ -131,13 +118,9 @@ async def list_expenses(
     start_date: str,
     end_date: str
 ):
-
     try:
-
         pool = await get_pool()
-
         async with pool.acquire() as conn:
-
             rows = await conn.fetch(
                 """
                 SELECT *
@@ -145,17 +128,23 @@ async def list_expenses(
                 WHERE date BETWEEN $1 AND $2
                 ORDER BY date DESC
                 """,
-                start_date,
-                end_date
+                start_date, end_date
             )
 
+        # Convert asyncpg Decimals to floats and Dates to strings for JSON serialization
         return [
-            dict(row)
+            {
+                "id": row["id"],
+                "date": str(row["date"]),
+                "amount": float(row["amount"]),
+                "category": row["category"],
+                "subcategory": row["subcategory"],
+                "note": row["note"]
+            }
             for row in rows
         ]
 
     except Exception as e:
-
         return {
             "status": "error",
             "message": str(e)
@@ -168,59 +157,42 @@ async def summarize(
     end_date: str,
     category: str | None = None
 ):
-
     try:
-
         pool = await get_pool()
-
         async with pool.acquire() as conn:
-
             if category:
-
                 rows = await conn.fetch(
                     """
-                    SELECT
-                        category,
-                        SUM(amount) AS total_amount,
-                        COUNT(*) AS count
+                    SELECT category, SUM(amount) AS total_amount, COUNT(*) AS count
                     FROM expenses
-                    WHERE date BETWEEN $1 AND $2
-                    AND category = $3
+                    WHERE date BETWEEN $1 AND $2 AND category = $3
                     GROUP BY category
                     """,
-                    start_date,
-                    end_date,
-                    category
+                    start_date, end_date, category
                 )
-
             else:
-
                 rows = await conn.fetch(
                     """
-                    SELECT
-                        category,
-                        SUM(amount) AS total_amount,
-                        COUNT(*) AS count
+                    SELECT category, SUM(amount) AS total_amount, COUNT(*) AS count
                     FROM expenses
                     WHERE date BETWEEN $1 AND $2
                     GROUP BY category
                     ORDER BY total_amount DESC
                     """,
-                    start_date,
-                    end_date
+                    start_date, end_date
                 )
 
+        # Convert asyncpg Decimals to floats for JSON serialization
         summary = [
-            dict(row)
+            {
+                "category": row["category"],
+                "total_amount": float(row["total_amount"]),
+                "count": row["count"]
+            }
             for row in rows
         ]
 
-        grand_total = sum(
-            float(
-                item["total_amount"]
-            )
-            for item in summary
-        )
+        grand_total = sum(item["total_amount"] for item in summary)
 
         return {
             "summary": summary,
@@ -228,7 +200,6 @@ async def summarize(
         }
 
     except Exception as e:
-
         return {
             "status": "error",
             "message": str(e)
@@ -240,33 +211,24 @@ async def total_expenses(
     start_date: str,
     end_date: str
 ):
-
     try:
-
         pool = await get_pool()
-
         async with pool.acquire() as conn:
-
             total = await conn.fetchval(
                 """
-                SELECT
-                    COALESCE(
-                        SUM(amount),
-                        0
-                    )
+                SELECT COALESCE(SUM(amount), 0)
                 FROM expenses
                 WHERE date BETWEEN $1 AND $2
                 """,
-                start_date,
-                end_date
+                start_date, end_date
             )
 
+        # Convert asyncpg Decimal to float
         return {
             "total": float(total)
         }
 
     except Exception as e:
-
         return {
             "status": "error",
             "message": str(e)
@@ -277,13 +239,9 @@ async def total_expenses(
 async def delete_expense(
     expense_id: int
 ):
-
     try:
-
         pool = await get_pool()
-
         async with pool.acquire() as conn:
-
             await conn.execute(
                 """
                 DELETE FROM expenses
@@ -294,12 +252,10 @@ async def delete_expense(
 
         return {
             "status": "success",
-            "message":
-            f"Deleted expense {expense_id}"
+            "message": f"Deleted expense {expense_id}"
         }
 
     except Exception as e:
-
         return {
             "status": "error",
             "message": str(e)
@@ -308,16 +264,10 @@ async def delete_expense(
 
 @mcp.tool()
 async def health_check():
-
     try:
-
         pool = await get_pool()
-
         async with pool.acquire() as conn:
-
-            version = await conn.fetchval(
-                "SELECT version()"
-            )
+            version = await conn.fetchval("SELECT version()")
 
         return {
             "status": "healthy",
@@ -326,45 +276,29 @@ async def health_check():
         }
 
     except Exception as e:
-
         return {
             "status": "error",
             "message": str(e)
         }
 
-
 # --------------------------------------------------
 # Resource
 # --------------------------------------------------
-
 
 @mcp.resource(
     "expense:///categories",
     mime_type="application/json"
 )
 def categories():
-
-    with open(
-        CATEGORIES_PATH,
-        "r",
-        encoding="utf-8"
-    ) as f:
-
+    with open(CATEGORIES_PATH, "r", encoding="utf-8") as f:
         return f.read()
-
 
 # --------------------------------------------------
 # Server
 # --------------------------------------------------
 
 if __name__ == "__main__":
-
-    port = int(
-        os.getenv(
-            "PORT",
-            "8000"
-        )
-    )
+    port = int(os.getenv("PORT", "8000"))
 
     mcp.run(
         transport="http",
