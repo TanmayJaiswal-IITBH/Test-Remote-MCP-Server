@@ -1,55 +1,51 @@
 from fastmcp import FastMCP
-import os
+import asyncpg
 import json
-import sqlite3
-import aiosqlite
-import tempfile
+import os
 
-# --------------------------------------------------
-# Configuration
-# --------------------------------------------------
+mcp = FastMCP("ExpenseTracker")
 
-DB_PATH = os.path.join(
-    os.path.dirname(__file__),
-    "expenses.db"
-)
+DATABASE_URL = os.environ["DATABASE_URL"]
 
 CATEGORIES_PATH = os.path.join(
     os.path.dirname(__file__),
     "categories.json"
 )
 
-mcp = FastMCP("ExpenseTracker")
-
 # --------------------------------------------------
-# Database Initialization
+# Database
 # --------------------------------------------------
 
+pool = None
 
-def init_db():
 
-    with sqlite3.connect(DB_PATH) as conn:
+async def get_pool():
+    global pool
 
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS expenses(
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                date TEXT NOT NULL,
-                amount REAL NOT NULL,
-                category TEXT NOT NULL,
-                subcategory TEXT NOT NULL,
-                note TEXT DEFAULT ''
-            )
-            """
+    if pool is None:
+        pool = await asyncpg.create_pool(
+            DATABASE_URL
         )
 
-        conn.commit()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS expenses (
+                    id SERIAL PRIMARY KEY,
+                    date DATE NOT NULL,
+                    amount NUMERIC NOT NULL,
+                    category TEXT NOT NULL,
+                    subcategory TEXT NOT NULL,
+                    note TEXT DEFAULT ''
+                )
+                """
+            )
 
+    return pool
 
-init_db()
 
 # --------------------------------------------------
-# Category Validation
+# Validation
 # --------------------------------------------------
 
 
@@ -71,7 +67,6 @@ def validate_category(
         for item in data["categories"]:
 
             if item["name"] == category:
-
                 return (
                     subcategory
                     in item["subcategories"]
@@ -80,12 +75,11 @@ def validate_category(
         return False
 
     except Exception:
-
         return False
 
 
 # --------------------------------------------------
-# MCP Tools
+# Tools
 # --------------------------------------------------
 
 
@@ -97,28 +91,24 @@ async def add_expense(
     subcategory: str,
     note: str = ""
 ):
-    """
-    Add a new expense.
-    """
 
     if not validate_category(
         category,
         subcategory
     ):
-
         return {
             "status": "error",
             "message":
-            "Invalid category/subcategory."
+            "Invalid category/subcategory"
         }
 
     try:
 
-        async with aiosqlite.connect(
-            DB_PATH
-        ) as conn:
+        pool = await get_pool()
 
-            cur = await conn.execute(
+        async with pool.acquire() as conn:
+
+            expense_id = await conn.fetchval(
                 """
                 INSERT INTO expenses(
                     date,
@@ -127,23 +117,22 @@ async def add_expense(
                     subcategory,
                     note
                 )
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (
-                    date,
-                    amount,
-                    category,
-                    subcategory,
-                    note
+                VALUES(
+                    $1,$2,$3,$4,$5
                 )
+                RETURNING id
+                """,
+                date,
+                amount,
+                category,
+                subcategory,
+                note
             )
 
-            await conn.commit()
-
-            return {
-                "status": "success",
-                "expense_id": cur.lastrowid
-            }
+        return {
+            "status": "success",
+            "expense_id": expense_id
+        }
 
     except Exception as e:
 
@@ -158,46 +147,28 @@ async def list_expenses(
     start_date: str,
     end_date: str
 ):
-    """
-    List expenses between two dates.
-    """
 
     try:
 
-        async with aiosqlite.connect(
-            DB_PATH
-        ) as conn:
+        pool = await get_pool()
 
-            cur = await conn.execute(
+        async with pool.acquire() as conn:
+
+            rows = await conn.fetch(
                 """
-                SELECT
-                    id,
-                    date,
-                    amount,
-                    category,
-                    subcategory,
-                    note
+                SELECT *
                 FROM expenses
-                WHERE date BETWEEN ? AND ?
+                WHERE date BETWEEN $1 AND $2
                 ORDER BY date DESC
                 """,
-                (
-                    start_date,
-                    end_date
-                )
+                start_date,
+                end_date
             )
 
-            rows = await cur.fetchall()
-
-            columns = [
-                d[0]
-                for d in cur.description
-            ]
-
-            return [
-                dict(zip(columns, row))
-                for row in rows
-            ]
+        return [
+            dict(row)
+            for row in rows
+        ]
 
     except Exception as e:
 
@@ -213,69 +184,64 @@ async def summarize(
     end_date: str,
     category: str | None = None
 ):
-    """
-    Summarize expenses.
-    """
 
     try:
 
-        query = """
-            SELECT
-                category,
-                SUM(amount) AS total_amount,
-                COUNT(*) AS count
-            FROM expenses
-            WHERE date BETWEEN ? AND ?
-        """
+        pool = await get_pool()
 
-        params = [
-            start_date,
-            end_date
+        async with pool.acquire() as conn:
+
+            if category:
+
+                rows = await conn.fetch(
+                    """
+                    SELECT
+                        category,
+                        SUM(amount) AS total_amount,
+                        COUNT(*) AS count
+                    FROM expenses
+                    WHERE date BETWEEN $1 AND $2
+                    AND category = $3
+                    GROUP BY category
+                    """,
+                    start_date,
+                    end_date,
+                    category
+                )
+
+            else:
+
+                rows = await conn.fetch(
+                    """
+                    SELECT
+                        category,
+                        SUM(amount) AS total_amount,
+                        COUNT(*) AS count
+                    FROM expenses
+                    WHERE date BETWEEN $1 AND $2
+                    GROUP BY category
+                    ORDER BY total_amount DESC
+                    """,
+                    start_date,
+                    end_date
+                )
+
+        summary = [
+            dict(row)
+            for row in rows
         ]
 
-        if category:
-
-            query += """
-                AND category = ?
-            """
-
-            params.append(category)
-
-        query += """
-            GROUP BY category
-            ORDER BY total_amount DESC
-        """
-
-        async with aiosqlite.connect(
-            DB_PATH
-        ) as conn:
-
-            cur = await conn.execute(
-                query,
-                params
-            )
-
-            rows = await cur.fetchall()
-
-            columns = [
-                d[0]
-                for d in cur.description
-            ]
-
-            summary = [
-                dict(zip(columns, row))
-                for row in rows
-            ]
-
-            grand_total = sum(
+        grand_total = sum(
+            float(
                 item["total_amount"]
-                for item in summary
             )
+            for item in summary
+        )
 
-            return {
-                "summary": summary,
-                "grand_total": grand_total
-            }
+        return {
+            "summary": summary,
+            "grand_total": grand_total
+        }
 
     except Exception as e:
 
@@ -290,17 +256,14 @@ async def total_expenses(
     start_date: str,
     end_date: str
 ):
-    """
-    Get total expenses.
-    """
 
     try:
 
-        async with aiosqlite.connect(
-            DB_PATH
-        ) as conn:
+        pool = await get_pool()
 
-            cur = await conn.execute(
+        async with pool.acquire() as conn:
+
+            total = await conn.fetchval(
                 """
                 SELECT
                     COALESCE(
@@ -308,20 +271,15 @@ async def total_expenses(
                         0
                     )
                 FROM expenses
-                WHERE date BETWEEN ? AND ?
+                WHERE date BETWEEN $1 AND $2
                 """,
-                (
-                    start_date,
-                    end_date
-                )
+                start_date,
+                end_date
             )
 
-            row = await cur.fetchone()
-            total = row[0] if row is not None else 0
-
-            return {
-                "total": total
-            }
+        return {
+            "total": float(total)
+        }
 
     except Exception as e:
 
@@ -335,31 +293,53 @@ async def total_expenses(
 async def delete_expense(
     expense_id: int
 ):
-    """
-    Delete an expense.
-    """
 
     try:
 
-        async with aiosqlite.connect(
-            DB_PATH
-        ) as conn:
+        pool = await get_pool()
+
+        async with pool.acquire() as conn:
 
             await conn.execute(
                 """
                 DELETE FROM expenses
-                WHERE id = ?
+                WHERE id = $1
                 """,
-                (expense_id,)
+                expense_id
             )
 
-            await conn.commit()
+        return {
+            "status": "success",
+            "message":
+            f"Deleted expense {expense_id}"
+        }
 
-            return {
-                "status": "success",
-                "message":
-                f"Deleted expense {expense_id}"
-            }
+    except Exception as e:
+
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+
+@mcp.tool()
+async def health_check():
+
+    try:
+
+        pool = await get_pool()
+
+        async with pool.acquire() as conn:
+
+            version = await conn.fetchval(
+                "SELECT version()"
+            )
+
+        return {
+            "status": "healthy",
+            "database": "connected",
+            "postgres": version
+        }
 
     except Exception as e:
 
@@ -370,7 +350,7 @@ async def delete_expense(
 
 
 # --------------------------------------------------
-# MCP Resource
+# Resource
 # --------------------------------------------------
 
 
@@ -390,7 +370,7 @@ def categories():
 
 
 # --------------------------------------------------
-# Run Server
+# Server
 # --------------------------------------------------
 
 if __name__ == "__main__":
@@ -398,7 +378,7 @@ if __name__ == "__main__":
     port = int(
         os.getenv(
             "PORT",
-            8000
+            "8000"
         )
     )
 
