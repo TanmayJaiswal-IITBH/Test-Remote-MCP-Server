@@ -9,10 +9,8 @@ import tempfile
 # Configuration
 # --------------------------------------------------
 
-TEMP_DIR = tempfile.gettempdir()
-
 DB_PATH = os.path.join(
-    TEMP_DIR,
+    os.path.dirname(__file__),
     "expenses.db"
 )
 
