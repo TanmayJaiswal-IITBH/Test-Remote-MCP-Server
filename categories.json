@@ -1,0 +1,134 @@
+{
+  "categories": [
+    {
+      "name": "Food",
+      "subcategories": [
+        "Restaurants",
+        "Fast Food",
+        "Cafe",
+        "Snacks",
+        "Delivery"
+      ]
+    },
+    {
+      "name": "Groceries",
+      "subcategories": [
+        "Vegetables",
+        "Fruits",
+        "Dairy",
+        "Bakery",
+        "Household Supplies"
+      ]
+    },
+    {
+      "name": "Transport",
+      "subcategories": [
+        "Fuel",
+        "Taxi",
+        "Bus",
+        "Train",
+        "Flight",
+        "Parking"
+      ]
+    },
+    {
+      "name": "Entertainment",
+      "subcategories": [
+        "Movies",
+        "Gaming",
+        "Streaming Services",
+        "Events",
+        "Books"
+      ]
+    },
+    {
+      "name": "Shopping",
+      "subcategories": [
+        "Clothing",
+        "Electronics",
+        "Accessories",
+        "Home Decor"
+      ]
+    },
+    {
+      "name": "Bills",
+      "subcategories": [
+        "Electricity",
+        "Water",
+        "Internet",
+        "Mobile Recharge",
+        "Gas"
+      ]
+    },
+    {
+      "name": "Healthcare",
+      "subcategories": [
+        "Doctor",
+        "Medicine",
+        "Hospital",
+        "Insurance"
+      ]
+    },
+    {
+      "name": "Education",
+      "subcategories": [
+        "Tuition",
+        "Books",
+        "Courses",
+        "Exam Fees"
+      ]
+    },
+    {
+      "name": "Travel",
+      "subcategories": [
+        "Accommodation",
+        "Food",
+        "Transport",
+        "Sightseeing"
+      ]
+    },
+    {
+      "name": "Personal Care",
+      "subcategories": [
+        "Haircut",
+        "Skincare",
+        "Cosmetics",
+        "Salon"
+      ]
+    },
+    {
+      "name": "Fitness",
+      "subcategories": [
+        "Gym",
+        "Sports",
+        "Equipment",
+        "Supplements"
+      ]
+    },
+    {
+      "name": "Income",
+      "subcategories": [
+        "Salary",
+        "Freelance",
+        "Business",
+        "Investment",
+        "Gift"
+      ]
+    },
+    {
+      "name": "Savings",
+      "subcategories": [
+        "Emergency Fund",
+        "Fixed Deposit",
+        "Mutual Funds",
+        "Stocks"
+      ]
+    },
+    {
+      "name": "Miscellaneous",
+      "subcategories": [
+        "Other"
+      ]
+    }
+  ]
+}
